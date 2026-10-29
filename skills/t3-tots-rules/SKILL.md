@@ -54,6 +54,8 @@ The prompt T3 shows is often a short description ("Redo merges with PR names"), 
 
 `t3ctl answer --decision` accepts an approval only with `--user-approved`. Pass it only after the user's yes for that request. Otherwise it refuses with `NEEDS_USER_APPROVAL` and sends nothing. `decline` and `cancel` need neither. Always pass `--request <id>` with the id the user saw. When several approvals are open, or the id matches more than one, t3ctl stops with `AMBIGUOUS` instead of picking one.
 
+`t3ctl inbox answer` is only for a user_input question that already has an inbox item. Pass `--from owner` only when the words are the user's own. Any other `--from` is refused with `NOT_OWNER` and nothing is sent. Never use the inbox for an approval. Approvals stay on `t3ctl answer`.
+
 Never invent the user's preferences. The thread decides how to do the work. The user decides what to build. Your prompts carry the user's context, not your design choices.
 
 ## Sending into threads
@@ -118,6 +120,7 @@ Uses T3's local API and needs the token, except `skills`. Running it with no arg
 | Watch | `watch --thread a[,b] [--state file] [--stall-min 20] [--json]` |
 | Send | `new --project p (--prompt t \| --prompt-file f) [--model m --effort e --title x --mode plan --attach a.png] [--wait [--timeout seconds]]`, `send --thread t (--prompt t \| --prompt-file f) [--queue] [--no-verify] [--wait [--timeout seconds]]` (`--wait` gives up after 300 seconds unless `--timeout` says otherwise) |
 | Answer | `answer --thread t [--request id] (--pick label \| --text words \| --answers json \| --decision d [--user-approved \| --redirect])` |
+| Inbox | `inbox list [--project p] [--open] [--due] [--json]`, `inbox answer --item id (--pick q:A or --text t or --answers json) --from owner --via room\|dm\|terminal --ref msg`, `inbox posted --item id --destination d [--ref msg]`, `inbox remind --item id`, `inbox mcp`. Each computer has its own `~/.t3-inbox`. The item's `machine` is where the answer command runs. `--due` lists unanswered items open 4 hours or more and sends nothing. `inbox remind` records that one reminder and sends nothing. |
 | Queue | `queue --thread t [--steer id\|all \| --cancel id\|all \| --resume \| --edit id --text x \| --move id (--before id\|end \| --first)]` |
 | Thread actions | `settle`, `unsettle`, `rename --title x`, `interrupt [--hold]`, `stop`, `subagent-stop --subagent id`, `fork [--run id --title x]`, `model [--model m --effort e --provider p]`, `snooze --until +2h\|HH:MM\|ISO`, `unsnooze`, `resume-at-reset [--cancel]`, `snooze-until-reset [--cancel]` |
 | Scheduled tasks | `tasks [--upsert ... \| --enable id \| --disable id \| --run id \| --delete id --yes]` |
@@ -153,6 +156,7 @@ Optional. It needs the token and `listen.json`. It follows T3's live events and 
 - `export.js` writes a redacted JSON export for reports. Options work like t3ctl (`--project Foo` or `--project=Foo`; an unknown option is `USAGE`). `--project` is a filter: an exact id, else a folder, else an exact title (case ignored) picks that project, and two exact matches stop with `AMBIGUOUS` listing them; otherwise every project whose title contains the words is exported, and it prints a note naming them. No `--project` means all. `survey.js` lists activity and stale threads.
 - `t3ui` and `ui-*.applescript` are a macOS-only UI fallback. They use the running T3 Code app, or `T3_APP`.
 - Data files the skills create in the tools folder: `templates.md`, `trackers/`, `update-prefs.json`, `sync-prefs.json`, `sync-backups/`, `out/`, `README.md`, `watch-state.json`, `watch-<name>.json`, `autoresume.json`. `t3ctl new` writes `started-here.json`. t3listen writes `listen.json` (private), `listen-state.json`, `answered-here.json` and `listen.log`.
+- The inbox store is `~/.t3-inbox` on that computer (or `T3_INBOX_DIR`). `items.jsonl` is append-only. `state.json` is a cache and is safe to delete. `routes.json` and `machine` are local config. The store is not in the tools folder. Do not put the webhook or the token in it.
 - Don't leave scratch files (CSVs, `.bak` copies, screenshots) in the tools folder. Put scratch files in `out/`. On Grok Bot, pages are built on the box (`/workspace`).
 
 ### Master copy
@@ -177,6 +181,10 @@ Scripts print these words. Relay them in plain words, not as errors. This is the
 | `NOT_PENDING` | That question was already answered or closed |
 | `NOT_ANSWERABLE` | Its run ended, so it can't be answered. Offer a follow-up instead |
 | `NEEDS_USER_APPROVAL` | `t3ctl answer` won't accept that approval on its own. Nothing was sent. Show it to the user, and after their yes for that request rerun with `--user-approved` |
+| `ALREADY_CLOSED` | That inbox item is already closed. The reason in parentheses says how (`answered-in-t3` means it was answered in T3). Say so. Do not submit it again. |
+| `NOT_OWNER` | `t3ctl inbox answer` only accepts `--from owner`, for the owner's own words. Nothing was sent. |
+| `REQUEST_GONE` | The thread is gone. The answer was saved and the item closed. Tell the user it could not be delivered. |
+| `NOT_DUE` | That inbox item is not due for a reminder yet (4 hours, still unanswered). Nothing was sent. |
 | `REDIRECTED` | The approval was declined and the thread was told to skip it or take a safer way and keep going. Note it for the user's report |
 | `REDIRECT_NOT_DELIVERED` | The approval was declined, but the follow-up didn't reach the thread. Don't rerun `answer` (the request is closed). Run the `t3ctl send ... --prompt-file` command it prints |
 | `NOT_LIMITED` | The thread isn't stopped on a usage limit, so there is nothing to resume |

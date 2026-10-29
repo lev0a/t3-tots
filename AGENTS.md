@@ -14,9 +14,9 @@ Tools folder: `~/t3-tots` (Windows `%USERPROFILE%\t3-tots`) unless the user pick
 
 | Target | Installed files |
 |---|---|
-| macOS | `t3q.py`, `t3ctl`, `t3listen`, `export.js`, `survey.js`, `cleanup/scan.py`, `t3ui`, `ui-dump.applescript`, `ui-menuitem.applescript`, `ui-model.applescript`, `ui-press.applescript`, `ui-type.applescript` |
-| Linux | `t3q.py`, `t3ctl`, `t3listen`, `export.js`, `survey.js`, `cleanup/scan.py` |
-| Windows | `t3q.py`, `t3ctl`, `t3ctl.cmd`, `t3listen`, `t3listen.cmd`, `export.js`, `survey.js`, `cleanup/scan.py` |
+| macOS | `t3q.py`, `t3ctl`, `t3listen`, `t3inbox.js`, `export.js`, `survey.js`, `cleanup/scan.py`, `t3ui`, `ui-dump.applescript`, `ui-menuitem.applescript`, `ui-model.applescript`, `ui-press.applescript`, `ui-type.applescript` |
+| Linux | `t3q.py`, `t3ctl`, `t3listen`, `t3inbox.js`, `export.js`, `survey.js`, `cleanup/scan.py` |
+| Windows | `t3q.py`, `t3ctl`, `t3ctl.cmd`, `t3listen`, `t3listen.cmd`, `t3inbox.js`, `export.js`, `survey.js`, `cleanup/scan.py` |
 
 Then run `chmod +x t3ctl t3listen` on macOS and Linux (on macOS also `chmod +x t3ui`), and put the release's `manifest.json` and the tag (in `VERSION`) in the tools folder. Never touch the `token`, `listen.json` or other data files already there.
 

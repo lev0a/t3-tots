@@ -248,6 +248,7 @@ test("preview-finish: NOT_FOUND in the shell list still reads an id-like query f
   const fs = require("fs"), os = require("os"), http = require("http"), { execFile } = require("child_process");
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "t3listen-preview-"));
   fs.copyFileSync(path.join(__dirname, "..", "tools", "t3listen"), path.join(tmp, "t3listen"));
+  fs.copyFileSync(path.join(__dirname, "..", "tools", "t3inbox.js"), path.join(tmp, "t3inbox.js"));
   fs.writeFileSync(path.join(tmp, "token"), "test-fixture");
   const threads = [{ id: "abcdefgh-1", title: "One" }, { id: "abcdefgh-2", title: "Two" }];
   const srv = http.createServer((req, res) => {
@@ -274,6 +275,7 @@ test("preview-finish: archivedThreads are searched; colon ids are id-like; AMBIG
   const fs = require("fs"), os = require("os"), http = require("http"), { execFile } = require("child_process");
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "t3listen-preview-arch-"));
   fs.copyFileSync(path.join(__dirname, "..", "tools", "t3listen"), path.join(tmp, "t3listen"));
+  fs.copyFileSync(path.join(__dirname, "..", "tools", "t3inbox.js"), path.join(tmp, "t3inbox.js"));
   fs.writeFileSync(path.join(tmp, "token"), "test-fixture");
   const threads = [{ id: "abcdefgh-1", title: "Live One" }, { id: "abcdefgh-2", title: "Live Two" }];
   const archivedThreads = [{ id: "arch-thread-99", title: "Old archived" }];
@@ -308,6 +310,7 @@ test("preview-finish: usage-limit fields come from the ended run; armResume is n
   assert.ok(!body.includes("armResume("), body);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "t3listen-preview-limit-"));
   fs.copyFileSync(path.join(__dirname, "..", "tools", "t3listen"), path.join(tmp, "t3listen"));
+  fs.copyFileSync(path.join(__dirname, "..", "tools", "t3inbox.js"), path.join(tmp, "t3inbox.js"));
   fs.writeFileSync(path.join(tmp, "token"), "test-fixture");
   const reset = "2026-01-01T05:00:00Z";
   const thread = { id: "limit-thread-01", title: "Limited", status: "running", activeRunId: "r2", latestRunId: "r2" };

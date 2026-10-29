@@ -20,6 +20,7 @@ TOOLS = [  # repo path, installed path, targets, purpose
     ("tools/t3ctl", "t3ctl", ALL, "T3 local API client and skills installer (Node 22+)"),
     ("tools/windows/t3ctl.cmd", "t3ctl.cmd", ["windows", "box"], "Windows wrapper for t3ctl"),
     ("tools/t3listen", "t3listen", ALL, "pushes T3 questions (open and close) and thread finish, fail and cancel events to your webhook (Node 22+, optional)"),
+    ("tools/t3inbox.js", "t3inbox.js", ALL, "local append-only T3 inbox (used by t3ctl and t3listen)"),
     ("tools/windows/t3listen.cmd", "t3listen.cmd", ["windows", "box"], "Windows wrapper for t3listen"),
     ("tools/export.js", "export.js", ALL, "redacted project export"),
     ("tools/survey.js", "survey.js", ALL, "thread activity survey"),
