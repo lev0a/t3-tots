@@ -11,7 +11,7 @@ ok() { echo "${1:-ok}"; }
 bad() { echo "FAIL"; [ -n "${1:-}" ] && printf '%s\n' "$1" | sed 's/^/    /'; fail=1; }
 
 step "node --check"
-out=""; for f in tools/t3ctl tools/t3listen tools/export.js tools/survey.js; do r=$(node --check "$f" 2>&1) || out+="$f: $r"$'\n'; done
+out=""; for f in tools/t3ctl tools/t3listen tools/t3inbox.js tools/export.js tools/survey.js; do r=$(node --check "$f" 2>&1) || out+="$f: $r"$'\n'; done
 [ -z "$out" ] && ok || bad "$out"
 
 step "python compile"

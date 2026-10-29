@@ -2,6 +2,7 @@
 // t3ctl - tiny client for the local T3 Code server (T3 Tots). Needs Node 22+.
 // Token: the `token` file next to this script (never printed). T3 data: T3CODE_HOME (default ~/.t3) + /userdata.
 const fs = require("fs"), path = require("path"), os = require("os"), crypto = require("crypto");
+const inbox = require("./t3inbox");
 const HOME = os.homedir();
 const die = (code, msg) => { console.error(`${code}: ${msg}`); process.exit(1); };
 function t3Dir() { // same for stable and Nightly; T3_HOME may point at the base or the userdata folder
@@ -33,7 +34,7 @@ function args(a = process.argv.slice(3)) { const o = {}; for (let i = 0; i < a.l
 // flags that always take a value; "--from --to dir" must not read as --from=true
 const VALUE_FLAGS = new Set(["thread", "project", "prompt", "prompt-file", "model", "effort", "title", "mode", "attach", "timeout", "from", "to", "only", "text", "pick", "answers",
   "decision", "request", "query", "q", "limit", "last", "number", "repo", "state", "stall-min", "until", "every", "at", "days", "id", "subagent", "edit", "move", "before", "steer",
-  "run", "provider", "turn", "reason", "label", "chars", "runtime", "enable", "disable", "delete", "copy"]);
+  "run", "provider", "turn", "reason", "label", "chars", "runtime", "enable", "disable", "delete", "copy", "item", "via", "ref", "destination"]);
 function missingValue(o, cmd) { // --cancel takes a run id only for queue; elsewhere it is a switch
   return Object.keys(o).find((k) => o[k] === true && (VALUE_FLAGS.has(k) || (k === "cancel" && cmd === "queue"))); }
 async function get(p) {
@@ -477,6 +478,61 @@ function skillsCmd(sub, o) {
   else console.log(`${dry ? "dry run: would install" : "installed"} ${n("new")} new, ${dry ? "update" : "updated"} ${n("update") + (o.force ? n("edited") : 0)}, ${n("same")} up to date, ${o.force ? 0 : n("edited")} kept (changed here)`);
   if (to && !dry) { rec.version = src.version; fs.writeFileSync(path.join(to, SKILLS_RECORD), JSON.stringify(rec, null, 1) + "\n"); }
 }
+// Inbox answers re-check T3, then either respond to the open request or queue a turn. Same dispatch shapes as answer/send.
+function inboxAdapter() {
+  return {
+    async lookup(item) {
+      let snap;
+      try { snap = await thread(item.threadId); }
+      catch (e) {
+        if (/HTTP 404\b/.test(String(e.message))) return { threadExists: false, pending: false, answerable: false, status: null };
+        throw e;
+      }
+      const p = snap.projection || snap;
+      let shellThread = null;
+      try {
+        const s = await shell();
+        shellThread = [...(s.threads || []), ...(s.archivedThreads || [])].find((t) => t.id === item.threadId) || null;
+      } catch {}
+      const r = item.requestId ? (p.runtimeRequests || []).find((x) => x.id === item.requestId) : null;
+      const info = r ? requestInfo(p, r) : null;
+      const th = p.thread || {};
+      return {
+        threadExists: true,
+        pending: !!(r && r.status === "pending"),
+        answerable: !!(info && info.answerable),
+        status: r ? r.status : null,
+        recordedAnswers: r && r.answers ? r.answers : null,
+        responseMode: info && info.responseMode,
+        activeRunId: (shellThread && shellThread.activeRunId) || th.activeRunId || null,
+        title: (shellThread && shellThread.title) || th.title || item.threadTitle,
+      };
+    },
+    async respond({ threadId, requestId, answers, commandId }) {
+      markHere(requestId, true);
+      try {
+        await rpc("orchestration.dispatchCommand", { type: "runtime-request.respond", commandId: commandId || uuid(), threadId, requestId, answers });
+      } catch (e) { markHere(requestId, false); throw e; }
+      for (let i = 0; i < 10; i++) {
+        const p = (await thread(threadId)).projection;
+        const now = (p.runtimeRequests || []).find((x) => x.id === requestId);
+        if (now && now.status !== "pending") return { status: now.status };
+        await new Promise((res) => setTimeout(res, 500));
+      }
+      throw new Error(`SENT_UNCONFIRMED: the answer was sent but the request still shows pending; check with: t3ctl pending --thread ${threadId}`);
+    },
+    async queueTurn({ threadId, text, commandId, messageId, title, activeRunId }) {
+      const t = { id: threadId, title: title || threadId, activeRunId: activeRunId || null };
+      await rpc("orchestration.dispatchCommand", {
+        type: "message.dispatch", createdBy: "user", creationSource: "web", commandId: commandId || uuid(), threadId,
+        messageId: messageId || uuid(), text, attachments: [],
+        dispatchMode: t.activeRunId ? { type: "queue_after_active" } : { type: "start_immediately" },
+      });
+      console.log(`sent to ${threadId}  "${t.title}"${t.activeRunId ? " (queued after current run)" : ""}`);
+      return { result: await verifyDelivery(t, messageId, true) };
+    },
+  };
+}
 const CMDS = ["queue", "projects", "models", "threads", "new", "send", "read", "settle", "unsettle", "rename", "interrupt", "pending", "answer", "diff", "files", "status", "raw", "limits", "resume-at-reset", "snooze-until-reset", "snooze", "unsnooze", "model", "search", "tasks", "prs", "pr", "fork", "stop", "subtasks", "subagent-stop", "watch"];
 const main = async () => {
   const cmd = process.argv[2], o = args();
@@ -646,7 +702,11 @@ const main = async () => {
     const tmp = `${sf}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(st, null, 1)); fs.renameSync(tmp, sf);
     if (o.json) { if (out.length) console.log(JSON.stringify({ changes: out, threads: snaps.map(({ reply, ...x }) => x) })); return; }
     for (const e of out) console.log(`${e.kind}  "${e.title}"  ${e.text}`); }
-  else console.log("t3ctl projects | models | threads [--project p] [--main] [--limit n] | new --project p --prompt t [--model m --effort e] [--wait [--timeout seconds]] | send --thread id|title --prompt t [--wait [--timeout seconds]] [--queue] | queue --thread t [--steer runId|all | --cancel runId|all] | read --thread id|title [--last N] | settle|unsettle --thread t | rename --thread t --title x | interrupt --thread t [--hold] | status --thread t [--json] | pending --thread t [--json] | answer --thread t [--request id] (--pick label | --text txt | --answers json | --decision accept|decline|... [--user-approved] [--redirect]) | diff --thread t | files --thread t [--last-turn] [--copy no] | limits [--json] | snooze --thread t --until +2h|HH:MM|ISO | unsnooze --thread t | queue --thread t (--resume | --edit runId --text x | --move runId [--before runId|end | --first]) | model --thread t [--model m] [--effort e] [--provider p] | search --query q [--limit n] | tasks [--upsert ... [--prompt-file f] | --enable id | --disable id | --run id | --delete id --yes] | prs --project p [--state open] | pr --thread t [--number n] [--all] | pr --project p --repo o/r --number n | fork --thread t [--run runId] [--title x] | stop --thread t | subtasks --thread t [--all] | subagent-stop --thread t --subagent id | resume-at-reset --thread t [--cancel] | snooze-until-reset --thread t [--cancel] | watch --thread a[,b] [--state file] [--stall-min 20] [--json] | new/send ... --attach img1.png,img2.jpg | new/send ... --prompt-file p.md | send ... --no-verify | skills [list] [--from dir] [--to dir] | skills install --to dir [--from dir] [--only a,b] [--dry-run] [--force]");
+  else if (cmd === "inbox") {
+    const sub = process.argv[3] && !String(process.argv[3]).startsWith("--") ? process.argv[3] : "";
+    await inbox.cli(sub, o, { ensureT3: init, adapter: inboxAdapter });
+  }
+  else console.log("t3ctl projects | models | threads [--project p] [--main] [--limit n] | new --project p --prompt t [--model m --effort e] [--wait [--timeout seconds]] | send --thread id|title --prompt t [--wait [--timeout seconds]] [--queue] | queue --thread t [--steer runId|all | --cancel runId|all] | read --thread id|title [--last N] | settle|unsettle --thread t | rename --thread t --title x | interrupt --thread t [--hold] | status --thread t [--json] | pending --thread t [--json] | answer --thread t [--request id] (--pick label | --text txt | --answers json | --decision accept|decline|... [--user-approved] [--redirect]) | diff --thread t | files --thread t [--last-turn] [--copy no] | limits [--json] | snooze --thread t --until +2h|HH:MM|ISO | unsnooze --thread t | queue --thread t (--resume | --edit runId --text x | --move runId [--before runId|end | --first]) | model --thread t [--model m] [--effort e] [--provider p] | search --query q [--limit n] | tasks [--upsert ... [--prompt-file f] | --enable id | --disable id | --run id | --delete id --yes] | prs --project p [--state open] | pr --thread t [--number n] [--all] | pr --project p --repo o/r --number n | fork --thread t [--run runId] [--title x] | stop --thread t | subtasks --thread t [--all] | subagent-stop --thread t --subagent id | resume-at-reset --thread t [--cancel] | snooze-until-reset --thread t [--cancel] | watch --thread a[,b] [--state file] [--stall-min 20] [--json] | inbox list [--project p] [--open] [--due] [--json] | inbox answer --item id (--pick q:A | --text t | --answers json) --from owner --via room|dm|terminal --ref msg | inbox posted --item id --destination d [--ref msg] | inbox remind --item id | inbox mcp | new/send ... --attach img1.png,img2.jpg | new/send ... --prompt-file p.md | send ... --no-verify | skills [list] [--from dir] [--to dir] | skills install --to dir [--from dir] [--only a,b] [--dry-run] [--force]");
 };
 if (require.main !== module) module.exports = { skillHash, args, missingValue, pickThread, pickProject, outPath, sensitivePath, sensitiveName, SENSITIVE_NAME, isMainThread, limitLine, localT, tzName, isSettled, threadLine, decodeText, approvalAllowed, redirectText, deliveryOf, stallHint, watchSnap, watchDiff, pendingOf, requestInfo, parseWhen, parseEvery, buildAnswer, matchOption };
 else main().catch((e) => { const m = String(e.message).match(/"message":"([^"]{3,300})"/); const msg = m && /^\[\{"_tag":"Fail"/.test(e.message) ? m[1] : e.message; console.error(/^[A-Z][A-Z0-9_]{3,}[: (]/.test(msg) ? msg : `error: ${msg}`); process.exit(1); });

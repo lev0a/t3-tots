@@ -225,6 +225,7 @@ test("findThread: archivedThreads are searched like search/preview-finish", asyn
   assert.match(src, /pickThread\(\[\.\.\.s\.threads, \.\.\.\(s\.archivedThreads \|\| \[\]\)\], q\)/);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "t3ctl-find-"));
   fs.copyFileSync(path.join(__dirname, "..", "tools", "t3ctl"), path.join(tmp, "t3ctl"));
+  fs.copyFileSync(path.join(__dirname, "..", "tools", "t3inbox.js"), path.join(tmp, "t3inbox.js"));
   fs.writeFileSync(path.join(tmp, "token"), "test-fixture");
   const threads = [{ id: "live-thread-01", title: "Live One", status: "idle" }];
   const archivedThreads = [{ id: "arch-thread-99", title: "Old archived", status: "completed" }];
@@ -256,6 +257,7 @@ test("answer: an approval goes through only with --user-approved; decline --redi
   const fs = require("fs"), os = require("os"), http = require("http"), crypto = require("crypto"), { execFile } = require("child_process");
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "t3ctl-answer-"));
   fs.copyFileSync(path.join(__dirname, "..", "tools", "t3ctl"), path.join(tmp, "t3ctl"));
+  fs.copyFileSync(path.join(__dirname, "..", "tools", "t3inbox.js"), path.join(tmp, "t3inbox.js"));
   fs.writeFileSync(path.join(tmp, "token"), "test-fixture");
   const thread = { id: "thread-approve-01", title: "Approve me", status: "idle" };
   const options = [{ decision: "accept", label: "Allow" }, { decision: "acceptForSession", label: "Always allow" }, { decision: "decline", label: "Deny" }];

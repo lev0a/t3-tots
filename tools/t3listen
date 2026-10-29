@@ -5,6 +5,7 @@
 // by POSTing JSON to the webhook in listen.json. No polling: it follows T3's live event stream. Needs Node 22+.
 // The webhook URL and headers live only in listen.json next to this script and are never printed.
 const fs = require("fs"), path = require("path"), os = require("os"), crypto = require("crypto"), cp = require("child_process");
+const inbox = require("./t3inbox");
 const HOME = os.homedir(), DIR = __dirname, CONF = path.join(DIR, "listen.json"), HERE = path.join(DIR, "answered-here.json"), STATE = path.join(DIR, "listen-state.json"), LOG = path.join(DIR, "listen.log"), PID = path.join(DIR, "listen.pid");
 const LABEL = process.env.T3LISTEN_LABEL || "com.t3tots.listen", TASK = process.env.T3LISTEN_LABEL || "T3 Tots listener";
 const argv = process.argv.slice(2), cmd = argv[0] && !argv[0].startsWith("--") ? argv[0] : "run", flag = (f) => argv.includes(f);
@@ -173,6 +174,27 @@ const known = new Map(); // threadId -> pendingRuntimeRequest.id last seen (null
 const meta = { projects: new Map(), threads: new Map() };
 const wanted = (r) => r.status === "pending" && !SKIP_KINDS.has(r.kind) && (r.kind === "user_input" || C.approvals) && (r.responseCapability || {}).type !== "not_resumable";
 
+// User-input questions become inbox items. Approvals stay on the webhook path and are not inbox items.
+async function inboxOpen(base, p, r) {
+  if (DRY || !r || r.kind !== "user_input") return null;
+  try {
+    const info = requestInfo(p, r);
+    const opened = await inbox.openFromRequest({
+      machine: base.machine, threadId: base.threadId, threadTitle: base.title, project: base.project,
+      requestId: r.id, createdAt: r.createdAt, questions: info.questions || [],
+    });
+    return opened.item;
+  } catch (err) { log(`inbox: ${err.message}`); return null; }
+}
+async function inboxClose(base, fields) {
+  if (DRY || !fields || fields.kind !== "user_input") return null;
+  try {
+    return await inbox.closeFromResolution({
+      machine: base.machine, requestId: fields.requestId, status: fields.status, answers: fields.answers || null,
+      answeredHere: !!fields.answeredHere, threadGone: !!fields.threadGone,
+    });
+  } catch (err) { log(`inbox: ${err.message}`); return null; }
+}
 async function reconcile(ep, threadId, opts = {}) {
   const t = meta.threads.get(threadId) || {}; let p = null;
   if (!opts.gone) { try { p = await threadSnap(ep, threadId); } catch (err) { log(`couldn't read thread ${threadId.slice(0, 40)}: ${err.message}`); return; } }
@@ -180,10 +202,12 @@ async function reconcile(ep, threadId, opts = {}) {
   const all = p ? p.runtimeRequests || [] : [];
   const open = all.filter(wanted);
   for (const r of open) {
+    const opened = await inboxOpen(base, p, r); // idempotent: a restart appends nothing when the item is already there
     if (S.sent[r.id] && (S.sent[r.id].delivered !== false || !opts.startup)) continue;
     const ageMin = (Date.now() - Date.parse(r.createdAt)) / 60000;
     if (opts.startup && C.skipStaleMinutes > 0 && ageMin > C.skipStaleMinutes) { S.sent[r.id] = { threadId, skipped: true }; continue; }
     const e = { event: "request.opened", ...base, ...requestInfo(p, r) };
+    if (opened) e.inboxItemId = opened.id;
     if (e.questions && !e.questions.length) e.note = "question details not readable; answer it in T3";
     S.sent[r.id] = { threadId, at: (S.sent[r.id] && S.sent[r.id].at) || Date.now(), delivered: false }; saveState(); await deliver(e);
   }
@@ -191,9 +215,46 @@ async function reconcile(ep, threadId, opts = {}) {
     if (s.threadId !== threadId || open.some((r) => r.id === id)) continue;
     const r = all.find((x) => x.id === id);
     if (s.closing && !opts.startup) continue; // already queued for retry
-    if (!s.skipped && !(await deliver({ event: "request.resolved", ...base, requestId: id, kind: r ? r.kind : "user_input", status: opts.gone || (r ? r.status : "gone"), answeredHere: answeredHere(id),
-      ...(r && r.answers ? { answers: r.answers } : {}), ...(r && r.decision ? { decision: r.decision } : {}), resolvedAt: (r && r.resolvedAt) || new Date().toISOString() }))) { s.closing = true; saveState(); continue; } // kept so a restart resends it
+    const kind = r ? r.kind : "user_input", status = opts.gone || (r ? r.status : "gone"), here = answeredHere(id);
+    const answers = r && r.answers ? r.answers : null;
+    const closed = await inboxClose(base, { kind, requestId: id, status, answers, answeredHere: here, threadGone: !!opts.gone });
+    const payload = { event: "request.resolved", ...base, requestId: id, kind, status, answeredHere: here,
+      ...(answers ? { answers } : {}), ...(r && r.decision ? { decision: r.decision } : {}), resolvedAt: (r && r.resolvedAt) || new Date().toISOString(),
+      ...(closed ? { inboxItemId: closed.id } : {}) };
+    if (!s.skipped && !(await deliver(payload))) { s.closing = true; saveState(); continue; } // kept so a restart resends it
     delete S.sent[id]; saveState();
+  }
+}
+// Startup: every open t3-request item whose request is no longer pending gets closed. Pending ones were opened above.
+async function sweepInbox(ep, live) {
+  if (DRY || !C) return;
+  let open;
+  try { open = inbox.openRequestItems(); } catch (err) { log(`inbox: ${err.message}`); return; }
+  const by = new Map();
+  for (const it of open) {
+    if (it.machine && C.machine && it.machine !== C.machine) continue;
+    if (!by.has(it.threadId)) by.set(it.threadId, []);
+    by.get(it.threadId).push(it);
+  }
+  for (const [tid, items] of by) {
+    if (!live.has(tid)) {
+      for (const it of items) await inbox.closeFromResolution({ machine: it.machine, requestId: it.requestId, status: "archived-or-deleted", threadGone: true });
+      continue;
+    }
+    let p = null;
+    try { p = await threadSnap(ep, tid); } catch (err) { log(`inbox sweep ${tid.slice(0, 40)}: ${err.message}`); continue; }
+    if (!p) {
+      for (const it of items) await inbox.closeFromResolution({ machine: it.machine, requestId: it.requestId, status: "gone", threadGone: true });
+      continue;
+    }
+    for (const it of items) {
+      const r = (p.runtimeRequests || []).find((x) => x.id === it.requestId);
+      if (r && r.status === "pending") continue;
+      await inbox.closeFromResolution({
+        machine: it.machine, requestId: it.requestId, status: r ? r.status : "gone",
+        answers: r && r.answers ? r.answers : null, answeredHere: answeredHere(it.requestId), threadGone: !r,
+      });
+    }
   }
 }
 
@@ -395,6 +456,7 @@ async function onItem(ep, v, full, ctx = {}) {
     for (const t of v.snapshot.threads || []) { live.add(t.id); meta.threads.set(t.id, { title: t.title, projectId: t.projectId }); known.set(t.id, t.pendingRuntimeRequest ? t.pendingRuntimeRequest.id : null); }
     const check = new Set([...v.snapshot.threads.filter((t) => t.pendingRuntimeRequest).map((t) => t.id), ...Object.values(S.sent).map((s) => s.threadId)]);
     for (const tid of check) await reconcile(ep, tid, { startup: true, ...(live.has(tid) ? {} : { gone: "archived-or-deleted" }) });
+    await sweepInbox(ep, live);
     for (const t of v.snapshot.threads || []) noteRun(t);
     if (!DRY) {
       pruneFinished();

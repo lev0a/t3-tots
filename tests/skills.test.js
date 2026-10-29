@@ -6,7 +6,7 @@ const { execFileSync } = require("child_process");
 const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "t3tots-skills-"));
 // A tools folder with only t3ctl in it (no token), so backups land in this temp folder.
-const toolsDir = tmp(); fs.copyFileSync(path.join(__dirname, "..", "tools", "t3ctl"), path.join(toolsDir, "t3ctl"));
+const toolsDir = tmp(); fs.copyFileSync(path.join(__dirname, "..", "tools", "t3ctl"), path.join(toolsDir, "t3ctl")); fs.copyFileSync(path.join(__dirname, "..", "tools", "t3inbox.js"), path.join(toolsDir, "t3inbox.js"));
 const run = (...a) => { try { return { code: 0, out: execFileSync(process.execPath, [path.join(toolsDir, "t3ctl"), "skills", ...a], { encoding: "utf8", stdio: "pipe" }) }; }
   catch (e) { return { code: e.status, out: String(e.stdout) + String(e.stderr) }; } };
 
